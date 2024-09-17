@@ -1,8 +1,8 @@
 # Converting .sav file to a .xlsx file
 rm(list = ls())
 
-data <- haven::read_sav(file.path("Data/01__Data.sav"))
+data <- haven::read_sav(file.path("01__Data/01__raw_data.sav"))
 
-writexl::write_xlsx(x = data, path = file.path("Data/02__Data.xlsx"))
+writexl::write_xlsx(x = data, path = file.path("01__Data/01__raw_data.xlsx"))
 
 
