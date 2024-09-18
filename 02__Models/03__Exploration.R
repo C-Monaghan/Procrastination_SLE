@@ -18,11 +18,7 @@ data_filtered <- data_filtered %>%
   mutate(age_group = cut(Age, breaks = c(18, 24, 45, 77), 
                          labels = c("18-24", "25-44", "45+"), 
                          include.lowest = TRUE),
-         age_group = factor(age_group, levels = c("18-24", "25-44", "45+"))) %>%
-  rename(GeneralHealth = GeneralHealthRating,
-         SLE_prime = SLEPRIME,
-         SLE = SubjectiveLifeExpectancy,
-         Total_CFC = Total_CFC14Scores)
+         age_group = factor(age_group, levels = c("18-24", "25-44", "45+")))
 
 # Processing
 data <- data_filtered %>%
@@ -138,8 +134,6 @@ fig_7 <- data %>%
     axis.title.y = element_text(size = 9),
     axis.title.x = element_text(size = 9)
   )
-
-
 patch_2 <- (fig_5 + fig_6) / fig_7
   
 # Continous plots --------------------------------------------------------------
