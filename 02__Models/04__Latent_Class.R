@@ -110,17 +110,17 @@ f <- cbind(
   Immediate_7) ~ Sex + GeneralHealth + ChronicIllness + age_group
 
 # Running 5 models with k-number of clusters and assessing based on AIC & BIC
-for(k in 1:5){
-  model <- poLCA(
-    formula = f, data = data_polca, nclass = k,
-    maxiter = 3000, nrep = 100, na.rm = TRUE,
-    graphs = FALSE, verbose = FALSE)
-  
-  # Calculating entropy
-  entropy_val <- round(entropy(posterior = model$posterior, k = k), digits = 3)
-  
-  cat("For R =", k, "AIC =", model$aic, "BIC =", model$bic, "Entropy =", entropy_val,  "\n")
-}
+# for(k in 1:5){
+#   model <- poLCA(
+#     formula = f, data = data_polca, nclass = k,
+#     maxiter = 3000, nrep = 100, na.rm = TRUE,
+#     graphs = FALSE, verbose = FALSE)
+#   
+#   # Calculating entropy
+#   entropy_val <- round(entropy(posterior = model$posterior, k = k), digits = 3)
+#   
+#   cat("For R =", k, "AIC =", model$aic, "BIC =", model$bic, "Entropy =", entropy_val,  "\n")
+# }
 
 # 2 class model provides the best results
 lca_model <- poLCA(
@@ -184,7 +184,7 @@ model_1 <- '
   FCon ~~ ICon;
   
   # STRUCTURAL MODEL
-  Proc ~ b1*FCon + b2*ICon + b3*SLE + Class;
+  Proc ~ b1*FCon + b2*ICon + b3*SLE + c*Class;
 '
 
 # Moderation effect
@@ -206,3 +206,11 @@ fit_2 <- sem(model = model_2, data = data_interaction, estimator = "ML", missing
 
 summary(fit_1, fit.measures = TRUE, standardized = TRUE, modindices = FALSE, rsquare = TRUE)
 summary(fit_2, fit.measures = TRUE, standardized = TRUE, modindices = FALSE, rsquare = TRUE)
+
+
+fit_1_results <- broom::tidy(fit_1)
+
+View(fit_1_results)
+
+fit_1_results %>%
+  filter(label != "")
