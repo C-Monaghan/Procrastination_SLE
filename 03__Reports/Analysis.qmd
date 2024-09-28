@@ -1,0 +1,935 @@
+---
+title: "Procrastination and Subjective Life Expectancy"
+subtitle: "Analysis of procrastination dataset"
+author: 
+  - name: "Cormac Monaghan"
+    url: "https://c-monaghan.github.io/"
+    orcid: "https://orcid.org/0000-0001-9012-3060"
+    affiliation:
+      - "Hamilton Institute, Maynooth University, Ireland"
+      - "Department of Psychology, Maynooth University, Ireland"
+  - name: "Ciarán Gartlan"
+    affiliation: 
+      - "Department of Psychology, Maynooth University, Ireland"
+  - name: "Rafael de Andrade Moral"
+    url: "https://rafamoral.github.io/"
+    orcid: "https://orcid.org/0000-0002-0875-3563"
+    affiliation:
+      - "Department of Mathematics and Statistics, Maynooth University, Ireland"
+  - name: "Joanna McHugh Power"
+    orcid: "https://orcid.org/0000-0002-7387-3107"
+    affiliation: 
+      - "Department of Psychology, Maynooth University, Ireland"
+toc: true
+toc-depth: 4
+bibliography: references.bib
+format: 
+  html:
+    theme: 
+      light: united
+    page-layout: full
+    html-math-method: katex
+    code-tools: true
+    self-contained: true
+    code-fold: true
+    code-summary: "Show the code"
+    include-in-header: 
+      - file: github-corner.html
+execute: 
+  warning: false
+editor: source
+---
+
+```{r setting-up}
+
+set.seed(3462) # Reproducibility
+
+# Loading packages -------------------------------------------------------------
+pacman::p_load(
+  dplyr,        # Data manipulation functions
+  tidyr,        # Reshaping and tidying data
+  naniar,       # Visualize patterns of missingness
+  ggplot2,      # Data visualization
+  plotly,       # Makes ggplots interactive
+  ggeasy,       # Simplify ggplot2 syntax
+  ggstatsplot,  # Enhanced ggplot2 plots with statistical tests and details
+  patchwork,    # Arrange multiple plots into one layout
+  ggpubr,       # Publication-ready ggplot2 visualizations 
+  correlation,  # Calculate and visualize correlations
+  see,          # Visual tools for model diagnostic plots
+  poLCA,        # Perform Latent Class Analysis (LCA) in R
+  lavaan,       # Structural Equation Modeling (SEM) in R
+  readxl,       # Import Excel files into R
+  rstatix       # Pipe-friendly syntax for statistical tests
+)
+
+
+# Functions --------------------------------------------------------------------
+# Collapsing likert scale ------------------------------------------------------
+likert_collapse <- function(x) {
+  ifelse(x %in% c(1, 2, 3), 1, 
+         ifelse(x == 4, 2, 3))
+}
+
+# Calculating entropy ----------------------------------------------------------
+entropy <- function(posterior, k) {
+  a <- - sum(posterior * log(posterior), na.rm = TRUE) 
+  b <- 143 * log(k)
+  
+  1 - (a / b)
+}
+
+# Making classification plot ---------------------------------------------------
+create_classification_plot <- function(data, class_num, prefix, title) {
+  data %>%
+    filter(Class == class_num) %>%
+    dplyr::select(starts_with(prefix)) %>%
+    tidyr::pivot_longer(cols = everything(),
+                        names_to = "var",
+                        values_to = "val") %>%
+    mutate(
+      val = case_when(
+        val == 1 ~ "Low",
+        val == 2 ~ "Neutral",
+        val == 3 ~ "High"),
+      val = factor(val, levels = c("Low", "Neutral", "High")),
+      var = as.factor(var)
+    ) %>%
+    filter(!is.na(val)) %>%
+    ggplot(aes(val)) +
+    geom_bar(aes(fill = var), colour = "black", position = "dodge", width = 0.75) +
+    labs(title = title, x = "", y = "") +
+    ylim(0, 60) +
+    theme_minimal() +
+    scale_fill_brewer(palette = "Set3") +
+    easy_center_title() +
+    easy_remove_legend()
+}
+
+
+# Reading in data
+data_raw <- read_xlsx(here::here(file.path("01__Data/01__raw_data.xlsx")))
+```
+
+# Processing and Exploration
+
+## Missing data analysis
+
+In its unprocessed raw format, the dataset contains data from $229$ participants. However, a large portion of these participants did not complete all sections of the survey, particularly the scale questions, leading to substantial levels of missing data.
+
+```{r missing-data}
+#| fig-width: 12
+#| label: fig-missing-data-raw
+#| fig-cap: Proportion of missing data in raw dataset
+
+data_raw %>%
+  dplyr::select(Sex:PPS12) %>%
+  visdat::vis_dat(palette = "cb_safe") +
+  labs(title = "Missing data (N = 229)") +
+  easy_center_title() +
+  easy_remove_legend() +
+  easy_x_axis_labels_size(size = 7)
+```
+
+As shown in @fig-missing-data-raw many participants stopped answering the survey when they reached the scale questions (from CFC1 onwards), resulting in a substantial amount of missing data in this portion of the dataset. Nevertheless, some participants only skipped certain questions within these sections, leading to sporadic missing values. Removing all participants with any missing data would result in a significant reduction of the sample size, potentially introducing bias and reducing statistical power. Therefore, a nuanced approach was adopted to exclude only those participants with high levels of missing data.
+
+### Criteria for Handling Missing Data
+
+To address this issue, two criteria were established to determine which participants to exclude from the analysis:
+
+-   **Criterion 1**: Participants were excluded if they failed to answer all questions from the **Consideration of Future Consequences (CFC)** scale, specifically items CFC9 through CFC14.
+-   **Criterion 2**: Participants were also excluded if they skipped all items from the **Pure Procrastination Scale (PPS)**, which includes PPS1 through PPS12.
+
+By applying these filtration steps, the dataset was reduced from 229 to 143 participants (@fig-missing-data-filtered). This approach allows us to retain participants who may have skipped a few items but still provided enough data for meaningful analysis.
+
+```{r}
+#| fig-width: 12
+#| label: fig-missing-data-filtered
+#| fig-cap: Proportion of missing data in filtered dataset
+
+# I have removed participants with high amounts of missing data in the sub scales
+# but kept those with low amounts of missing data
+data_filter <- data_raw %>%
+  filter(rowSums(!is.na(dplyr::select(., CFC9:CFC14))) > 0) %>%
+  filter(rowSums(!is.na(dplyr::select(., PPS1:PPS12))) > 0) # 143 participants
+
+# Individuals who noted down "prefer not to say" are marked as NA
+data_filter <- data_filter %>%
+  mutate(
+    Sex = ifelse(Sex == 3, NA, Sex),
+    ChronicIllness = ifelse(ChronicIllness == 3, NA, ChronicIllness))
+
+# Visualizing filtering dataset
+data_filter %>%
+  dplyr::select(Sex:PPS12) %>%
+  visdat::vis_dat(palette = "cb_safe") +
+  labs(title = "Missing data (N = 143)") +
+  easy_center_title() +
+  easy_remove_legend() +
+  easy_x_axis_labels_size(size = 7)
+```
+
+## Data Processing
+
+### Data transformation
+
+A number of reprocessing steps were performed to clean and prepare the dataset for analysis. These transformations included renaming variables for clarity, recoding categorical variables, and creating age groups to facilitate comparisons across demographic categories.
+
+```{r processing-data}
+data <- data_filter %>%
+  rename(
+    GeneralHealth = GeneralHealthRating, 
+    SLE_prime = SLEPRIME,
+    SLE = SubjectiveLifeExpectancy, 
+    Total_CFC = Total_CFC14Scores) %>%
+    mutate(
+      # Creating age groups
+      age_group = cut(
+        Age, 
+        breaks = c(18, 24, 45, 77),
+        labels = c("18-24", "25-44", "45+"), 
+        include.lowest = TRUE),
+      age_group = factor(age_group, 
+                         levels = c("18-24", "25-44", "45+"))) %>%
+  # Creating factor variables
+    mutate(
+    # Converting sex to factor
+    Sex = ifelse(Sex == 1, "Male", "Female"),
+    Sex = factor(Sex, levels = c("Male", "Female")),
+    
+    # Specifying health assessment
+    GeneralHealth = case_when(
+      GeneralHealth == 1 ~ "Excellent",
+      GeneralHealth == 2 ~ "Very Good",
+      GeneralHealth == 3 ~ "Good",
+      GeneralHealth == 4 ~ "Fair",
+      GeneralHealth == 5 ~ "Poor"),
+    GeneralHealth = factor(GeneralHealth, levels = c(
+      "Excellent", "Very Good", "Good", "Fair", "Poor")),
+    
+    # Specifying chronic illness
+    ChronicIllness = case_when(
+      ChronicIllness == 1 ~ "Present",
+      ChronicIllness == 2 ~ "Not Present"),
+    ChronicIllness = factor(
+      ChronicIllness, levels = c(
+        "Not Present", "Present")))
+```
+
+### Recalculation of Total CFC-I Scores
+
+The Consideration of Future Consequences (CFC) scale measures participants' tendency to consider future versus immediate consequences in decision-making. The total scores for the CFC-Immediate (CFC-I) sub scale had been originally calculated by reverse coding certain items and summing them up. However, according to the scoring sheet in the [CFC documentation](https://scales.arabpsychology.com/s/two-factor-consideration-of-future-consequences-scale-cfc-14/) reverse coding is only necessary when creating an overall CFC score for each person. Therefore, the total CFC-I score was recalculated using the raw scores from the relevant CFC-I items.
+
+```{r CFC-I-Calculation}
+data <- data %>%
+  mutate(Total_CFCI = rowSums(across(c(CFC3:CFC5, CFC9:CFC12)), 
+                              na.rm = TRUE))
+```
+
+## Data Visualisation
+
+::: {.panel-tabset .nav-pills}
+### Factor Plots
+
+@fig-factor-plot presents a breakdown of the categorical variables in our dataset.
+
+```{r factor_plots}
+#| fig-width: 12
+#| fig-height: 10
+#| label: fig-factor-plot
+#| fig-cap: Breakdown of categorical variables
+
+# Gender Balance
+fig_1 <- data %>%
+  ggplot(aes(Sex)) +
+  geom_bar(aes(fill = Sex), colour = "black", 
+           width = 0.75) +
+  geom_text(stat = "count", aes(label = ..count..), 
+            vjust = -0.5) +
+  scale_y_continuous(expand = expansion(mult = 0.1)) +
+  labs(title = "Gender Balance", x = NULL, y = "Count") +
+  scale_fill_manual(values = c("skyblue", "salmon")) +
+  theme_classic() +
+  easy_remove_legend() +
+  easy_center_title()
+
+# Age group balance
+fig_2 <- data %>%
+  filter(!is.na(age_group)) %>%
+  ggplot(aes(age_group)) +
+  geom_bar(aes(fill = age_group), colour = "black", 
+           width = 0.75) +
+  geom_text(stat = "count", aes(label = ..count..), 
+            vjust = -0.5) +
+  scale_y_continuous(expand = expansion(mult = 0.1)) +
+  labs(title = "Age Group Distribution", x = NULL, y = NULL) +
+  scale_fill_manual(values = c("skyblue", 
+                               "lightgreen", 
+                               "salmon")) +
+  theme_classic() +
+  easy_remove_legend() +
+  easy_center_title()
+  
+# General health assessment
+fig_3 <- data %>%
+  ggplot(aes(GeneralHealth)) +
+  geom_bar(aes(fill = GeneralHealth), colour = "black", 
+           width = 0.75) +
+  geom_text(stat = "count", aes(label = ..count..), 
+            vjust = -0.5) +
+  scale_y_continuous(expand = expansion(mult = 0.1)) +
+  scale_fill_manual(values = c("skyblue", 
+                               "lightgreen", 
+                               "salmon", 
+                               "lightyellow", 
+                               "lavender")) +
+  labs(title = "General Health Assessment", 
+       x = NULL, y = "Count") +
+  theme_classic() +
+  easy_center_title() +
+  easy_remove_legend()
+  
+# Health Issues
+fig_4 <- data %>%
+  ggplot(aes(ChronicIllness)) +
+  geom_bar(aes(fill = ChronicIllness), colour = "black", 
+           width = 0.75) +
+  geom_text(stat = "count", aes(label = ..count..), 
+            vjust = -0.5) +
+  scale_y_continuous(expand = expansion(mult = 0.1)) +
+  scale_fill_manual(values = c("skyblue", 
+                               "lightgreen", 
+                               "salmon")) +
+  labs(title = "Chronic Illness", x = NULL, y = NULL) +
+  theme_classic() +
+  easy_center_title() +
+  easy_remove_legend()
+
+(fig_1 + fig_2) / (fig_3 + fig_4)
+```
+
+### Age
+
+@fig-distribution-age shows the distribution of age for both males and females.
+
+```{r distribution_plots_age}
+#| fig-width: 12
+#| label: fig-distribution-age
+#| fig-cap: Distribution of age via sex
+
+data %>%
+  ggplot(aes(Age)) +
+  geom_histogram(aes(fill = Sex), binwidth = 5, colour = "black") +
+  scale_x_continuous(breaks = seq(15, 75, by = 5)) +
+  scale_fill_manual(values = c("skyblue", "salmon")) +
+  facet_wrap(~ Sex) +
+  labs(x = "Age", y = "Count") +
+  theme_minimal() +
+  easy_remove_legend()
+```
+
+### Subjective Life Expectancy
+
+@fig-distribution-SLE shows the distribution of both subjective life expectancy (SLE) and the SLE priming question (SLE Prime).
+
+```{r distribution_plots_SLE}
+#| fig-width: 12
+#| label: fig-distribution-SLE
+#| fig-cap: Distribution of subjective life expectency
+
+fig_5 <- data %>%
+  ggplot(aes(SLE_prime)) +
+  geom_histogram(binwidth = 5, fill = "skyblue", colour = "black") +
+  scale_x_continuous(breaks = seq(50, 105, by = 5)) +
+  labs(title = "To what age do you think someone your age will live", x = "Subjective Life Expectency", y = "Count") +
+  theme_minimal() +
+  easy_center_title()
+
+fig_6 <- data %>%
+  ggplot(aes(SLE)) +
+  geom_histogram(binwidth = 5, fill = "salmon", colour = "black") +
+  scale_x_continuous(breaks = seq(50, 105, by = 5)) +
+  labs(title = "To age do you think you'll live", x = "Subjective Life Expectency", y = "Count") +
+  theme_minimal() +
+  easy_center_title()
+
+(fig_5 + fig_6) + plot_layout(axis_titles = "collect")
+
+```
+
+Meanwhile, @fig-relationship-SLE shows the relationship between both SLE and SLE Prime. For the most part, many people think that they, along with others, will live to be about 80.
+
+```{r relationship-SLE}
+#| fig-width: 12
+#| label: fig-relationship-SLE
+#| fig-cap: Relationship between subjective life expectency and subjective life expectency prime
+
+data %>%
+  ggplot(aes(x = SLE, y = SLE_prime)) +
+  geom_jitter(colour = "#2E2E2E", alpha = 0.8) +
+  scale_x_continuous(breaks = seq(50, 105, by = 5)) +
+  scale_y_continuous(breaks = seq(50, 105, by = 5)) +
+  labs(title = "Relationship between SLE and SLE Prime", 
+       x = "To age do you think you'll live", y = "To what age do you think someone your age will live") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.title.y = element_text(size = 10),
+    axis.title.x = element_text(size = 10)
+  )
+```
+
+### Consideration of Consequences
+
+@fig-distribution-CFC shows the distribution of both subscales of the consideration of consequences (CFC) questionnaire.
+
+```{r distribution_plots_CFC}
+#| fig-width: 12
+#| label: fig-distribution-CFC
+#| fig-cap: Distribution of CFC (immediate and future)
+
+fig_7 <- data %>%
+  ggplot(aes(Total_CFCI)) +
+  geom_histogram(binwidth = 2, fill = "skyblue", colour = "black") +
+  scale_x_continuous(breaks = seq(7, 49, by = 7)) +
+  labs(title = "Consideration of immediate consequences", x = "CFC-I", y = "count") +
+  theme_minimal() +
+  easy_center_title()
+
+fig_8 <- data %>%
+  ggplot(aes(Total_CFCF)) +
+  geom_histogram(binwidth = 2, fill = "salmon", colour = "black") +
+  scale_x_continuous(breaks = seq(7, 49, by = 7)) +
+  labs(title = "Consideration of future consequences", x = "CFC-F", y = "count") +
+  theme_minimal() +
+  easy_center_title()
+
+(fig_7 + fig_8)
+```
+
+### Procrastination
+
+Finally, @fig-distribution-procrastination shows the distribution of the procrastination variable.
+
+```{r distribution_plots_PPS}
+#| fig-width: 12
+#| label: fig-distribution-procrastination
+#| fig-cap: Distribution of procrastination
+
+data %>%
+  ggplot(aes(Total_PPS)) +
+  geom_histogram(binwidth = 5, fill = "skyblue", colour = "black") +
+  scale_x_continuous(breaks = seq(0, 60, by = 5)) +
+  labs(x = "Total Procrastination", y = "Count") +
+  theme_minimal()
+```
+:::
+
+## Data Analysis
+
+### Correlations
+
+To get a better sense of the relationships within the data, we can use both the `correlation` and `see` packages from the `easystats` framework. @fig-correlation-matrix shows a correlation matrix of all continuous variables within the data. Areas in blue indicate positive correlations, while areas in red indicate negative correlations.
+
+Overall, there is:
+
+-   A positive correlation between procrastination and a consideration for immediate consequences @fig-correlation-1
+-   Negative correlation between age and procrastination @fig-correlation-2
+-   A negative correlation between both subscales of the CFC (to be expected)
+-   A positive correlation between SLE and SLE Prime (to be expected)
+
+```{r correlations}
+#| fig-width: 12
+#| label: fig-correlation-matrix
+#| fig-cap: Correlation matrix of continous variables
+
+correlation_results <- data %>%
+  dplyr::select(Age, Total_PPS, Total_CFCF, Total_CFCI, 
+         SLE_prime, SLE) %>%
+  rename(
+    PPS = Total_PPS,
+    CFC_F = Total_CFCF,
+    CFC_I = Total_CFCI,
+    SLE_Prime = SLE_prime,
+    SLE = SLE
+  ) %>%
+  correlation() # correlation package
+
+# Plotting correlation matrix
+summary(correlation_results) %>%
+  plot() + # see package
+  theme_classic() +
+  easy_center_title()
+```
+
+#### Procrastination and Immediate Consequences
+
+```{r scatter_plot_PPS_CFC}
+#| fig-width: 12
+#| fig-height: 8
+#| label: fig-correlation-1
+#| fig-cap: Relationship between procrastination and CFC immediate
+
+ggscatterstats(
+  data = data, x = Total_PPS, y = Total_CFCI, 
+  xlab = "Procrastination", ylab = "CFC-I", 
+  title = "Relationship between procrastination and CFC Immediate", 
+  bf.message = FALSE  # Not doing Bayesian Stuff 
+) +
+  scale_x_continuous(breaks = seq(0, 60, by = 5)) +
+  scale_y_continuous(breaks = seq(7, 49, by = 7)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+#### Procrastination and Age
+
+```{r scatter_plot_PPS_Age}
+#| fig-width: 12
+#| fig-height: 8
+#| label: fig-correlation-2
+#| fig-cap: Relationship between procrastination and age
+
+ggscatterstats(
+  data = data, x = Total_PPS, y = Age,
+  xlab = "Procrastination", ylab = "Age",
+  title = "Relationship between procrastination and age",
+  bf.message = FALSE
+) +
+  scale_x_continuous(breaks = seq(0, 60, by = 5)) +
+  scale_y_continuous(breaks = seq(15, 75, by = 5)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+```
+
+# Statistical Analysis
+
+## Latent Class Analysis
+
+Latent Class Analysis (LCA) (@fig-lca) is a statistical method used to identify subgroups (or "latent classes") within a population based on patterns in categorical or ordinal data. LCA assumes that there is an unobserved (latent) categorical variable that divides individuals into mutually exclusive and exhaustive subgroups, and the patterns of responses to observed variables are used to infer these subgroups.
+
+![Example of Latent Class Analysis](./images/01__LCA_example.png){#fig-lca .lightbox width="100%"}
+
+### Latent class models
+
+#### Technical Explanation
+
+The basic latent class model is a type of finite mixture model [@agresti2012] with the aim of grouping individuals into a finite number of unobserved (latent) subgroups, based on their responses to a set of observed categorical variables (called "manifest" variables).
+
+Suppose we have $J$ polytomous (categorical) variables, known as the “manifest” variables, each of which contains $K_j$ possible outcomes (multiple choice answers). These variables are recorded for $N$ individuals where, $i = 1, 2,  \dots N$ . Let $Y_{ijk}$ represent the observed values such that $Y_{ijk} = 1$ if respondent $i$ selects the $k$th response to the $j$th variable, and $Y_{ijk} = 0$ otherwise, where $j = 1 \dots J$ and $k = 1 \dots K_j$.
+
+The latent class model assumes that the differences in responses are due to unobserved subgroups, called latent classes $R$, and that within each subgroup, the responses are conditionally independent.
+
+The model works by estimating the probability $\pi_{jrk}$ that an individual in latent class $r = 1 \dots R$ will choose the $k$-th outcome for the $j$-th variable.
+
+The probability is represented as:
+
+$$
+f(Y_i; \pi_r) = \prod^J_{j = 1}\prod^{K_j}_{k = 1}(\pi_{jrk})^{Y_{ijk}}
+$$
+
+with a probability density function:
+
+$$
+P(Y_i \; \vert \; \pi, p) = \sum^R_{r = 1} p_r \; f(Y_i; \pi_r)
+$$ Finally, given estimates $\hat{p}_r$ and $\hat{\pi}_{jrk}$ the posterior probability that each individual belongs to each class, conditional on the observed values of the manifest variables, can be calculated using Bayes’ formula:
+
+$$
+\hat{P}(r \; \vert Y_i) = \frac{\hat{p}_r \; f(Y_i; \hat{\pi}_r)}{\sum^R_{q = 1} \hat{p}_q \; f(Y_i; \hat{\pi}_r)}
+$$
+
+#### Non-Technical Explanation
+
+Imagine you have a group of people, and you're asking them multiple-choice questions (like in a survey). The idea behind latent class analysis is that there are hidden subgroups (or **classes**) of people who tend to answer in similar ways, but you don't know who belongs to which group just by looking at their answers. These hidden subgroups aren't obvious—hence the term **latent**, which means hidden.
+
+-   **Observing Patterns**: You look at how people respond to the questions. Some people might answer in ways that show they're part of a particular group (for example, "Group A" might be people who prefer outdoor activities, while "Group B" might prefer indoor activities).
+
+-   **Guessing the Groups**: The latent class model tries to figure out how many different hidden groups there are and what the chances are that someone belongs to each group, based on their answers.
+
+-   **Classifying People**: After running the model, it assigns each person a probability of belonging to each hidden group. For example, if the model finds two groups, it might say there's a 70% chance someone is in Group A and a 30% chance they're in Group B.
+
+-   **Making Predictions**: With this information, you can now predict what types of answers people in each group are likely to give in the future or even find patterns in the data that weren't obvious before.
+
+### poLCA
+
+The Polytomous Variable Latent Class Analysis (poLCA) [@linzer2011] package in R is designed to estimate latent class models. The latent class model is fitted by maximizing the likelihood that the observed data belongs to these latent subgroups. Specifically, poLCA uses the Expectation-Maximization (EM) algorithm to iteratively estimate two key parameters:
+
+-   **Class Membership Probabilities**: The likelihood that an individual belongs to a given latent class.
+-   **Item-Response Probabilities**: The probability of giving a particular response, conditional on latent class membership.
+
+The goal is to maximize the **log-likelihood function**:
+
+$$
+log(L) = \sum^N_{i = 1} \; ln \;(P(Y_i \; \vert \; \pi, p))
+$$
+
+where:
+
+-   $N$ represents the number of individuals
+-   $Y_i$ represents the observed responses of individual $i$
+-   $\pi$ represents the class-specific response probability
+-   $p$ represents the class membership probabilities
+
+The EM algorithm alternates between two steps:
+
+-   **Expectation (E) Step**: It calculates the expected log-likelihood based on the current parameter estimates.
+-   **Maximization (M) Step**: It updates the parameters to maximize this expected log-likelihood.
+
+This process repeats until the model converges, finding the best-fitting parameters for a given number of latent classes
+
+## Data Processing
+
+The Consideration for Future Consequences (CFC) scale measures participants' tendency to consider future versus immediate consequences in decision-making. It consists of 7 Likert scale items, where responses range from 1 ("Not like me at all") to 7 ("Extremely like me").
+
+When performing LCA with this scale, several challenges arise:
+
+-   **Overparameterization**: The large number of response options (1 to 7) combined with multiple variables leads to an excessive number of parameters to estimate, especially with a smaller sample size.
+-   **Negative Degrees of Freedom**: As a result of the above we end up with negative degrees of freedom.
+
+To address these issues, we collapsed the 7-point Likert scale into simpler categories using logical cut-off values. Since no standard cut-offs exist (to the best of our knowledge) for this scale, we devised a custom scoring system (@fig-scoring) to reduce the complexity while retaining meaningful distinctions in the data.
+
+![Custom scoring system for CFC-14 items. Here negatively worded answers (1, 2, 3) are scored as 1, a neutral answer (4) is scored as 2, and positively worded answers (5, 6, 7) are scored as 3](./images/02__scoring_system.png){#fig-scoring .lightbox width="100%"}
+
+```{r data-processing}
+# Processing
+data <- data %>%
+  mutate(
+    across(c(CFC1:CFC14), likert_collapse), # Custom Likert Scale
+    
+    # Turning back into numerical factors
+    Sex = ifelse(Sex == "Male", 0, 1),
+    Sex = factor(Sex, levels = c(0, 1)),
+    ChronicIllness = ifelse(ChronicIllness == "Not Present", 0, 1),
+    ChronicIllness = factor(ChronicIllness, levels = c(0, 1)),
+    GeneralHealth = ifelse(GeneralHealth %in% c("Fair", "Poor"), 0, 1),
+    GeneralHealth = factor(GeneralHealth, levels = c(0, 1))
+    ) %>%
+  rename(
+    # Future Items
+    F_1 = CFC1,
+    F_2 = CFC2,
+    F_3 = CFC6,
+    F_4 = CFC7,
+    F_5 = CFC8,
+    F_6 = CFC13,
+    F_7 = CFC14,
+    
+    # Immediate Items
+    I_1 = CFC3,
+    I_2 = CFC4,
+    I_3 = CFC5,
+    I_4 = CFC9,
+    I_5 = CFC10,
+    I_6 = CFC11,
+    I_7 = CFC12,
+  )
+
+# Setting up data for LCA ------------------------------------------------------
+data_polca <- data %>%
+  # Creating factor variables
+  mutate(
+    # Age groups coded from 1 - 3
+    age_group = case_when(
+      age_group == "18-24" ~ 1,
+      age_group == "25-44" ~ 2,
+      age_group == "45+" ~ 3),
+    age_group = as.factor(age_group)
+  ) %>%
+  # Only necessary variables
+  dplyr::select(Sex, ChronicIllness, age_group, starts_with("F_"), starts_with("I_"))
+
+# Outputting new scoring system
+data %>%
+  dplyr::select(starts_with("F_")) %>%
+  head(n = 6) %>%
+  kableExtra::kbl(align = 'c') %>%
+  kableExtra::kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+## Fitting LCA Model
+
+One of the benefits of LCA , is the variety of tools available for assessing model fit and determining an appropriate number of latent classes $R$ In some applications, the number of latent classes will be selected for primarily theoretical reasons. In other cases, however, the analysis may be of a more exploratory nature, with the objective being to locate the best fitting or most parsimonious model. As such, researchers may start with a model of $R = 1$ and iteratively increase the number of latent classes by one until a suitable fit has been achieved.
+
+In our analysis, a series of models were fit ranging from classes $R = 1 \dots 4$. Following a similar approach to @meijer2022, we used a maximum of 3000 iterations, and repeated each analysis 100 times to decrease chances of obtaining local maxima.
+
+Model fit was assessed using the Akaike Information Criterion (AIC), Bayesian Information Criterion (BIC), Sample-Size Adjusted Bayesian Information Criterion (SS-BIC), entropy, and a Lo-Mendell-Rubin test (LMR). In LCA lower values for AIC, BIC, and SS-BIC indicate better fit. However, since BIC accounts for the loss of parsimony, it is often considered the most reliable fit index for basic latent class models [@linzer2011; @van2024]. As such, we placed a greater focus on BIC for model selection. Additionally, entropy values exceeding 0.80 suggest adequate certainty in classification, and the LMR should achieve a significant level ($p < 0.05)$.
+
+$$
+\text{AIC} = -2\Lambda + 2\Phi \qquad \text{BIC} = -2\Lambda + \Phi \; ln(N) \quad \text{SS-BIC} = -2\Lambda + \Phi  \; ln(\frac{(n + 2)}{24})
+$$ where:
+
+-   $\Lambda$ represents the maximum log-likelihood of the model.
+-   $\Phi$ represents the total number of estimated parameters.
+
+![Goodness-of-fit statistics for one to four class models](./images/03__goodness_of_fit.png){#tbl-goodness-of-fit .lightbox tbl-cap-location="top" width="100%"}
+
+```{r lca-k-clusters}
+# # Setting up LCA ---------------------------------------------------------------
+# # Creating model formula
+# f <- cbind(
+#   F_1, F_2, F_3, F_4, F_5, F_6, F_7,
+#   I_1, I_2, I_3, I_4, I_5, I_6, 
+#   I_7) ~ 1
+# 
+# # Running models with k-number of clusters
+# for(k in 1:5){
+#   model <- poLCA(
+#     formula = f, data = data_polca, nclass = k,
+#     maxiter = 3000, nrep = 100, na.rm = TRUE,
+#     graphs = FALSE, verbose = FALSE)
+# 
+#     # Calculating AIC, BIC, and SS-BIC
+#     lambda <- model$llik
+#     phi <- model$npar
+#     N <- nrow(data_polca)
+# 
+#     aic <- round(model$aic, digits = 2)
+#     bic <- round(model$bic, digits = 2)
+#     ss_bic <- (-2 * lambda) + (phi + log(N + 2) / 24)
+#     ss_bic <- round(ss_bic, digits = 2)
+# 
+#     # Calculating entropy
+#     entropy_val <- round(entropy(posterior = model$posterior, k = k), digits = 2)
+# 
+#     # Rounding lambda and phi for output
+#     lambda <- round(lambda, digits = 2)
+#     phi <- round(phi, digits = 2)
+# 
+#     cat("For R =", k, "AIC =", aic, "BIC =", bic, "SS-BIC = ", ss_bic, "Entropy = ", entropy_val, "Log(L) =", lambda, "phi =", phi, "\n")
+# }
+```
+
+The two-class model showed lower Log(L), AIC, BIC, and SS-BIC values compared to the one-class model, indicating improved fit. Additionally, the entropy value exceeded 0.80, suggesting clear class separation. Overall, the two-class model (@fig-LCA-plot) demonstrated a strong balance between model complexity and fit and the fit metrics are highlighted in bold (@tbl-goodness-of-fit)
+
+```{r lca-two-clusters}
+#| fig-width: 12
+#| label: fig-LCA-plot
+#| fig-cap: Outputted plot from poLCA package
+
+# Setting up LCA ---------------------------------------------------------------
+# Creating model formula
+f <- cbind(
+  F_1, F_2, F_3, F_4, F_5, F_6, F_7,
+  I_1, I_2, I_3, I_4, I_5, I_6,
+  I_7) ~ 1
+
+lca_model <- poLCA(
+  formula = f, data = data_polca, nclass = 2,
+  maxiter = 3000, nrep = 100, na.rm = FALSE, 
+  verbose = FALSE, graphs = FALSE)
+
+# Adding class predictions
+data_classification <- data %>%
+  mutate(Class = lca_model$predclass - 1) # Adding predicted class
+
+# Plotting LCA model
+plot(lca_model)
+```
+
+### Visualising & Analysing
+
+::: {.panel-tabset .nav-pills}
+#### Latent Profile
+
+@fig-lca-profile displays the scores of the two classes on the 14 CFC items. Class 1, comprising $45.1\% \; (n = 64)$ of respondents, showed a more balanced response across all items, and was thus labelled the **neutral** orientation group. In contrast, Class 2, representing $54.9\% \; (n = 79)$ of respondents, was characterized by a strong orientation toward future consequences and a low orientation toward immediate consequences. This group was labeled the **high future, low immediate** orientation group.
+
+```{r latent-profiles}
+#| fig-width: 12
+#| label: fig-lca-profile
+#| fig-cap: Latent Profile Plot of Item Response Probabilities
+
+labels <- c(
+  "CFC-F 1", "CFC-F 2", "CFC-F 3", "CFC-F 4", 
+  "CFC-F 5", "CFC-F 6", "CFC-F 7",
+  "CFC-I 1", "CFC-I 2", "CFC-I 3", "CFC-I 4", 
+  "CFC-I 5", "CFC-I 6", "CFC-I 7")
+
+data_classification %>%
+  dplyr::select(starts_with("F_"), starts_with("I_"), Class) %>%
+  tidyr::pivot_longer(
+    cols = F_1:I_7,
+    names_to = "CFC",
+    values_to = "Response") %>%
+  group_by(Class, CFC) %>%
+  summarise(Response = mean(Response, na.rm = TRUE)) %>%
+  mutate(Class = as.factor(Class)) %>%
+  ggplot(aes(x = CFC, y = Response, colour = Class, group = Class)) +
+  geom_line(linewidth = 0.75) +
+  geom_point(size = 2.5) +
+  scale_colour_manual(
+    values = c("sienna1", "hotpink4"), labels = c("Class 1", "Class 2")) +
+  scale_x_discrete(labels = labels) +
+  labs(
+    title = "Latent Profile Plot of Item Response Probabilities",
+    subtitle = "Class 1 membership = 45.1%, Class 2 membership = 54.9%",
+    x = "") +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+    plot.subtitle = element_text(hjust = 0.5, size = 10),
+    axis.text.x = element_text(size = 10, angle = 30, vjust = 0.7, hjust = 1),
+    axis.title.y = element_text(size = 12),
+    plot.margin = margin(0.5, 0.5, 0.5, 0.5, "cm")) +
+  easy_move_legend("bottom") +
+  easy_remove_legend_title() +
+  easy_plot_legend_size(size = 11)
+```
+
+#### T-Tests
+
+In @fig-procrastination-class we perform a t-test of procrastination scores per latent class membership. The mean procrastination score for class 1 $36.9 (SD = 11.5)$, whereas the mean for class 2 was $32.1 (SD = 11.2)$. A Welch two-samples t-test showed that the difference was statistically significant, $t(135.59) = 2.52; \; p = 0.013; \; d = 0.43$.
+
+```{r t-tests}
+#| fig-width: 12
+#| fig-height: 8
+#| label: fig-procrastination-class
+#| fig-cap: Analysis of procrastination scores per LCA class
+
+proc_scores <- data_classification %>%
+  ggplot(aes(Total_PPS)) +
+  geom_density(aes(fill = factor(Class)), alpha = 0.5) +
+  scale_fill_manual(
+    values = c("sienna1", "hotpink4"), labels = c("Class 1", "Class 2")) +
+  labs(title = "Distribution of procrastination scores (per LCA class)", 
+       x = "Total Procrastination", y = "Density") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, size = 10, face = "bold")) +
+  easy_remove_legend_title() +
+  easy_move_legend("bottom")
+
+# Conducting T-Test
+results <- data_classification %>%
+  t_test(Total_PPS ~ Class) %>%
+  add_significance() %>%
+  add_xy_position(x = "Class")
+
+# Plotting Results
+proc_t_test <- data_classification %>%
+  mutate(Class = ifelse(Class == 0, "Class 1", "Class 2"),
+         Class = as.factor(Class)) %>%
+  ggboxplot(
+    x = "Class", y = "Total_PPS",
+    ylab = "Total Procrastination", xlab = "",
+    add = "jitter") +
+  stat_pvalue_manual(results, tip.length = 0) +
+  labs(
+    title = "T Test of procrastination scored (per LCA class)",
+    subtitle = get_test_label(results, detailed = TRUE)) +
+  theme(plot.title = element_text(hjust = 0.5, size = 10, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 10))
+
+proc_scores + proc_t_test
+
+```
+
+#### Scatter Plots
+
+@fig-cfc-procrastination shows the relationship between both immediate and future consequences on procrastination for each LCA class.
+
+```{r}
+#| fig-width: 12
+#| label: fig-cfc-procrastination
+#| fig-cap: Consideration of Consequences vs. Procrastination (per LCA class)
+
+proc_ic <- data_classification %>%
+  ggplot(aes(x = Total_PPS, y = Total_CFCI, colour = as.factor(Class))) +
+  geom_point(size = 2) +
+  scale_x_continuous(breaks = seq(0, 60, by = 5)) +
+  scale_colour_manual(values = c("sienna1", "hotpink4"), 
+                      labels = c("Class 1", "Class 2")) +
+  labs(x = "Total Procrastination", y = "Immediate consequences") +
+  theme_classic() +
+  easy_remove_legend_title() +
+  easy_move_legend("bottom")
+
+proc_fc <- data_classification %>%
+  ggplot(aes(x = Total_PPS, y = Total_CFCF, colour = as.factor(Class))) +
+  geom_point(size = 2) +
+  scale_x_continuous(breaks = seq(0, 60, by = 5)) +
+  scale_colour_manual(values = c("sienna1", "hotpink4"), 
+                      labels = c("Class 1", "Class 2")) +
+  labs(x = "Total Procrastination", y = "Future consequences") +
+  theme_classic() +
+  easy_remove_legend_title() +
+  easy_move_legend("bottom")
+
+(proc_ic  + proc_fc) +
+  plot_layout(axes = "collect_x", guides = "collect") +
+  plot_annotation(
+    title = "Consideration of Consequences vs. Procrastination (per LCA class)",
+    theme = theme(
+      plot.title = element_text(hjust = 0.5, size = 10, face = "bold"),
+      legend.position = "bottom"))
+```
+
+:::
+
+##  SEM Analysis
+
+After performing the LCA we ran a **multi-group structural equation model (MSEM)** to explore the relationships between both latent constructs and observed variables for each class membership.
+
+```{r}
+# Data processing 
+data_sem <- data_classification %>%
+  mutate(
+    # Recalculating with new scoring system
+    Total_CFCI = rowSums(across(c(I_1:I_7)), na.rm = TRUE),
+    Total_CFCF = rowSums(across(c(F_1:F_7)), na.rm = TRUE),
+    
+    # Scaling 
+    # Total_CFCI = scale(Total_CFCI),
+    # Total_CFCF = scale(Total_CFCF),
+    SLE = scale(SLE),
+    Age = scale(Age),
+    
+    # Creating interaction effect
+    FCon_SLE = Total_CFCF * SLE,
+    ICon_SLE = Total_CFCI * SLE,
+    
+    # Reversing Chronic Illness
+    # 0 = no presence of illness // 1 = presence of illness
+    ChronicIllness = ifelse(ChronicIllness == 0, 1, 0),
+    ChronicIllness = factor(ChronicIllness, levels = c(0, 1)),
+    )
+
+# Specifying model -------------------------------------------------------------
+model <- '
+  # LATENT VARIABLES
+  Proc =~ PPS1 + PPS2 + PPS3 + PPS4 + PPS5 + PPS6 + PPS7 + PPS8 + PPS9 + PPS10 + PPS11 + PPS12;
+  
+  # RESIDUALS - (Monaghan et al., 2024)
+  PPS1 ~~ PPS2;
+  PPS10 ~~ PPS11;
+  
+  # STRUCTURAL MODEL
+  Proc ~ SLE + SLE:Age + Age + Sex + ChronicIllness;
+'
+
+# Fitting and outputting model
+fit <- sem(model = model, data = data_sem, estimator = "ML", missing = "fiml.x", group = "Class")
+
+summary(fit, fit.measures = TRUE, standardized = TRUE, modindices = FALSE, rsquare = TRUE)
+
+```
+
+
+<button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne">
+
+Session Information
+
+</button>
+
+:::: {#collapseOne .accordion-collapse .collapse}
+<div>
+
+```{r session-info, echo=FALSE}
+sessionInfo()
+```
+
+</div>
+::::
+
+# References
