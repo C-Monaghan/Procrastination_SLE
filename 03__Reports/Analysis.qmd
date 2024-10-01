@@ -1,5 +1,5 @@
 ---
-title: "Procrastination and Subjective Life Expectancy"
+title: "Procrastination and Subjective Remaining Life"
 subtitle: "Analysis of procrastination dataset"
 author: 
   - name: "Cormac Monaghan"
@@ -22,6 +22,7 @@ author:
       - "Department of Psychology, Maynooth University, Ireland"
 toc: true
 toc-depth: 4
+toc-title: On this page
 bibliography: references.bib
 format: 
   html:
@@ -60,7 +61,9 @@ pacman::p_load(
   poLCA,        # Perform Latent Class Analysis (LCA) in R
   lavaan,       # Structural Equation Modeling (SEM) in R
   readxl,       # Import Excel files into R
-  rstatix       # Pipe-friendly syntax for statistical tests
+  rstatix,      # Pipe-friendly syntax for statistical tests
+  gt,           # For creating tables
+  gtExtras      # Extra functions for gt tables
 )
 
 
@@ -104,6 +107,14 @@ create_classification_plot <- function(data, class_num, prefix, title) {
     scale_fill_brewer(palette = "Set3") +
     easy_center_title() +
     easy_remove_legend()
+}
+
+tidy_output <- function(fit) {
+  broom::tidy(fit) %>%
+    filter(term %in% c("Proc ~ SRL", "Proc ~ Sex", "Proc ~ ChronicIllness")) %>%
+    dplyr::select(!c(op, block)) %>%
+    mutate(across(!c(term, group, p.value), \(x) round(x, digits = 2))) %>%
+    mutate(p.value = round(p.value, digits = 3))
 }
 
 
@@ -173,7 +184,7 @@ data_filter %>%
 
 ### Data transformation
 
-A number of reprocessing steps were performed to clean and prepare the dataset for analysis. These transformations included renaming variables for clarity, recoding categorical variables, and creating age groups to facilitate comparisons across demographic categories.
+A number of reprocessing steps were performed to clean and prepare the dataset for analysis. These transformations included renaming variables for clarity, recoding categorical variables, creating age groups to facilitate comparisons across demographic categories, and creating a new variable called **subjective remaining life** (subjective life expectancy - age).
 
 ```{r processing-data}
 data <- data_filter %>%
@@ -189,11 +200,15 @@ data <- data_filter %>%
         breaks = c(18, 24, 45, 77),
         labels = c("18-24", "25-44", "45+"), 
         include.lowest = TRUE),
-      age_group = factor(age_group, 
-                         levels = c("18-24", "25-44", "45+"))) %>%
+      age_group = factor(age_group, levels = c("18-24", "25-44", "45+")),
+      
+      # Subjective remaining life
+      SRL = SLE - Age) %>%
+  
   # Creating factor variables
     mutate(
-    # Converting sex to factor
+    
+      # Converting sex to factor
     Sex = ifelse(Sex == 1, "Male", "Female"),
     Sex = factor(Sex, levels = c("Male", "Female")),
     
@@ -241,6 +256,7 @@ data <- data %>%
 
 # Gender Balance
 fig_1 <- data %>%
+  filter(!is.na(Sex)) %>%
   ggplot(aes(Sex)) +
   geom_bar(aes(fill = Sex), colour = "black", 
            width = 0.75) +
@@ -291,6 +307,7 @@ fig_3 <- data %>%
   
 # Health Issues
 fig_4 <- data %>%
+  filter(!is.na(ChronicIllness)) %>%
   ggplot(aes(ChronicIllness)) +
   geom_bar(aes(fill = ChronicIllness), colour = "black", 
            width = 0.75) +
@@ -318,6 +335,7 @@ fig_4 <- data %>%
 #| fig-cap: Distribution of age via sex
 
 data %>%
+  filter(!is.na(Age), !is.na(Sex)) %>% 
   ggplot(aes(Age)) +
   geom_histogram(aes(fill = Sex), binwidth = 5, colour = "black") +
   scale_x_continuous(breaks = seq(15, 75, by = 5)) +
@@ -328,7 +346,7 @@ data %>%
   easy_remove_legend()
 ```
 
-### Subjective Life Expectancy
+### Life Expectancy
 
 @fig-distribution-SLE shows the distribution of both subjective life expectancy (SLE) and the SLE priming question (SLE Prime).
 
@@ -377,6 +395,22 @@ data %>%
     axis.title.y = element_text(size = 10),
     axis.title.x = element_text(size = 10)
   )
+```
+
+Finally @fig-distribution-SRL shows the distribution of subjective remaining life
+
+```{r distribution_plots_SRL}
+#| fig-width: 12
+#| label: fig-distribution-SRL
+#| fig-cap: Distribution of subjective remaining life
+
+data %>%
+  ggplot(aes(SRL)) +
+  geom_histogram(binwidth = 5, fill = "skyblue", colour = "black") +
+  scale_x_reverse(breaks = seq(0, 85, by = 5)) +
+  labs(title = "Subjective remaining life", x = "Years", y = "Count") +
+  theme_minimal() +
+  easy_center_title()
 ```
 
 ### Consideration of Consequences
@@ -433,10 +467,12 @@ To get a better sense of the relationships within the data, we can use both the 
 
 Overall, there is:
 
--   A positive correlation between procrastination and a consideration for immediate consequences @fig-correlation-1
--   Negative correlation between age and procrastination @fig-correlation-2
+-   A positive correlation between procrastination and a CFC-I (@fig-correlation-1)
+-   A negative correlation between age and procrastination (@fig-correlation-2)
+-   A positive correlation between SRL and CFC-I (@fig-correlation-3)
 -   A negative correlation between both subscales of the CFC (to be expected)
 -   A positive correlation between SLE and SLE Prime (to be expected)
+-   A negative correlation between SRL and age (to be expected)
 
 ```{r correlations}
 #| fig-width: 12
@@ -445,7 +481,7 @@ Overall, there is:
 
 correlation_results <- data %>%
   dplyr::select(Age, Total_PPS, Total_CFCF, Total_CFCI, 
-         SLE_prime, SLE) %>%
+         SLE_prime, SLE, SRL) %>%
   rename(
     PPS = Total_PPS,
     CFC_F = Total_CFCF,
@@ -462,7 +498,9 @@ summary(correlation_results) %>%
   easy_center_title()
 ```
 
-#### Procrastination and Immediate Consequences
+::: {.panel-tabset .nav-pills}
+
+#### Procrastination and CFC-I
 
 ```{r scatter_plot_PPS_CFC}
 #| fig-width: 12
@@ -502,6 +540,28 @@ ggscatterstats(
         plot.subtitle = element_text(hjust = 0.5))
 
 ```
+
+#### SRL and CFC-I
+```{r scatter_plot_SRL_CFC}
+#| fig-width: 12
+#| fig-height: 8
+#| label: fig-correlation-3
+#| fig-cap: Relationship between SRL and CFC-I
+
+ggscatterstats(
+  data = data, x = SRL, y = Total_CFCF,
+  xlab = "Subjective Remaining Life", ylab = "CFC-F",
+  title = "Relationship between subjective remaining life and CFC Future",
+  bf.message = FALSE
+  ) +
+  scale_x_continuous(breaks = seq(0, 80, by = 5)) +
+  scale_y_continuous(breaks = seq(7, 49, by = 7)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+```
+
+:::
 
 # Statistical Analysis
 
@@ -643,10 +703,12 @@ data_polca <- data %>%
 data %>%
   dplyr::select(starts_with("F_")) %>%
   head(n = 6) %>%
-  kableExtra::kbl(align = 'c') %>%
-  kableExtra::kable_styling(
-    full_width = FALSE,
-    bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+  gt() %>%
+  gt_theme_guardian() %>%
+  cols_align(align = "center") %>%
+  tab_header(title = "New Scoring System") %>%
+  tab_options(table.width = pct(100)) %>%
+  opt_align_table_header(align = "center")
 ```
 
 ## Fitting LCA Model
@@ -664,43 +726,43 @@ $$ where:
 -   $\Lambda$ represents the maximum log-likelihood of the model.
 -   $\Phi$ represents the total number of estimated parameters.
 
-![Goodness-of-fit statistics for one to four class models](./images/03__goodness_of_fit.png){#tbl-goodness-of-fit .lightbox tbl-cap-location="top" width="100%"}
-
-```{r lca-k-clusters}
+```{r lca-k-clusters, eval=FALSE}
 # # Setting up LCA ---------------------------------------------------------------
 # # Creating model formula
-# f <- cbind(
-#   F_1, F_2, F_3, F_4, F_5, F_6, F_7,
-#   I_1, I_2, I_3, I_4, I_5, I_6, 
-#   I_7) ~ 1
-# 
-# # Running models with k-number of clusters
-# for(k in 1:5){
-#   model <- poLCA(
-#     formula = f, data = data_polca, nclass = k,
-#     maxiter = 3000, nrep = 100, na.rm = TRUE,
-#     graphs = FALSE, verbose = FALSE)
-# 
-#     # Calculating AIC, BIC, and SS-BIC
-#     lambda <- model$llik
-#     phi <- model$npar
-#     N <- nrow(data_polca)
-# 
-#     aic <- round(model$aic, digits = 2)
-#     bic <- round(model$bic, digits = 2)
-#     ss_bic <- (-2 * lambda) + (phi + log(N + 2) / 24)
-#     ss_bic <- round(ss_bic, digits = 2)
-# 
-#     # Calculating entropy
-#     entropy_val <- round(entropy(posterior = model$posterior, k = k), digits = 2)
-# 
-#     # Rounding lambda and phi for output
-#     lambda <- round(lambda, digits = 2)
-#     phi <- round(phi, digits = 2)
-# 
-#     cat("For R =", k, "AIC =", aic, "BIC =", bic, "SS-BIC = ", ss_bic, "Entropy = ", entropy_val, "Log(L) =", lambda, "phi =", phi, "\n")
-# }
+f <- cbind(
+  F_1, F_2, F_3, F_4, F_5, F_6, F_7,
+  I_1, I_2, I_3, I_4, I_5, I_6,
+  I_7) ~ 1
+
+# Running models with k-number of clusters
+for(k in 1:5){
+  model <- poLCA(
+    formula = f, data = data_polca, nclass = k,
+    maxiter = 3000, nrep = 100, na.rm = TRUE,
+    graphs = FALSE, verbose = FALSE)
+
+    # Calculating AIC, BIC, and SS-BIC
+    lambda <- model$llik
+    phi <- model$npar
+    N <- nrow(data_polca)
+
+    aic <- round(model$aic, digits = 2)
+    bic <- round(model$bic, digits = 2)
+    ss_bic <- (-2 * lambda) + (phi + log(N + 2) / 24)
+    ss_bic <- round(ss_bic, digits = 2)
+
+    # Calculating entropy
+    entropy_val <- round(entropy(posterior = model$posterior, k = k), digits = 2)
+
+    # Rounding lambda and phi for output
+    lambda <- round(lambda, digits = 2)
+    phi <- round(phi, digits = 2)
+
+    cat("For R =", k, "AIC =", aic, "BIC =", bic, "SS-BIC = ", ss_bic, "Entropy = ", entropy_val, "Log(L) =", lambda, "phi =", phi, "\n")
+}
 ```
+
+![Goodness-of-fit statistics for one to four class models](./images/03__goodness_of_fit.png){#tbl-goodness-of-fit .lightbox tbl-cap-location="top" width="100%"}
 
 The two-class model showed lower Log(L), AIC, BIC, and SS-BIC values compared to the one-class model, indicating improved fit. Additionally, the entropy value exceeded 0.80, suggesting clear class separation. Overall, the two-class model (@fig-LCA-plot) demonstrated a strong balance between model complexity and fit and the fit metrics are highlighted in bold (@tbl-goodness-of-fit)
 
@@ -763,7 +825,7 @@ data_classification %>%
     values = c("sienna1", "hotpink4"), labels = c("Class 1", "Class 2")) +
   scale_x_discrete(labels = labels) +
   labs(
-    title = "Latent Profile Plot of Item Response Probabilities",
+    title = "Latent Profile Plot of Item Response Scores",
     subtitle = "Class 1 membership = 45.1%, Class 2 membership = 54.9%",
     x = "") +
   theme_classic() + 
@@ -869,51 +931,173 @@ proc_fc <- data_classification %>%
 
 ##  SEM Analysis
 
-After performing the LCA we ran a **multi-group structural equation model (MSEM)** to explore the relationships between both latent constructs and observed variables for each class membership.
+After performing the LCA we ran two **structural equation models** (one global model and one multi-group model) using the ``lavaan`` package to evaluate the relationship between latent constructs and observed variables.
 
-```{r}
+We start by performing a few small pre-processing steps to prefer the data for SEM. This involves scaling SRL to be mean centered and chronic illness recoded so that 0 now means "no presence of illness" and 1 means "presence of illness".
+
+```{r sem-data-processing}
 # Data processing 
 data_sem <- data_classification %>%
-  mutate(
-    # Recalculating with new scoring system
-    Total_CFCI = rowSums(across(c(I_1:I_7)), na.rm = TRUE),
-    Total_CFCF = rowSums(across(c(F_1:F_7)), na.rm = TRUE),
-    
-    # Scaling 
-    # Total_CFCI = scale(Total_CFCI),
-    # Total_CFCF = scale(Total_CFCF),
-    SLE = scale(SLE),
-    Age = scale(Age),
-    
-    # Creating interaction effect
-    FCon_SLE = Total_CFCF * SLE,
-    ICon_SLE = Total_CFCI * SLE,
-    
-    # Reversing Chronic Illness
-    # 0 = no presence of illness // 1 = presence of illness
-    ChronicIllness = ifelse(ChronicIllness == 0, 1, 0),
-    ChronicIllness = factor(ChronicIllness, levels = c(0, 1)),
-    )
+  mutate(SRL = scale(SRL, center = TRUE),
+         ChronicIllness = factor(ifelse(ChronicIllness == 0, 1, 0), levels = c(0, 1))) %>%
+  dplyr::select(Age, SRL, Sex, ChronicIllness, Class, starts_with("PPS"))
+```
 
+
+::: {.panel-tabset .nav-pills}
+### Model 1
+To assess the direct effects of LCA class structure, subjective remaining life, and their interaction on procrastination, a structural equation model was applied to the data (see @fig-model-1). The model ran for 54 iterations and converged normally with acceptable fit (CFI = 0.901; TLI = 0.881; $\chi^2_{126}$ = 988.60; RMSEA = 0.076; SRMR = 0.071). All latent variable loadings for procrastination were above 0.31.
+
+The results indicated a significant negative effect of the LCA class structure on procrastination ($\beta$ = -0.33; p = 0.034), while subjective remaining life had a significant positive effect ($\beta$ = 0.30; p = 0.001). However, the interaction between class structure and subjective remaining life was non-significant ($\beta$ = -0.06; p = 0.661). Furthermore, the model covariates, sex ($\beta$ = -0.08; p = -.592) and chronic illness ($\beta$ = -0.20; p = 0.199) did not show any significant associations with procrastination.
+
+
+![Global structural equation model](./images/04__model_1.png){#fig-model-1 .lightbox}
+
+```{r sem-model-1}
 # Specifying model -------------------------------------------------------------
-model <- '
+model_1 <- '
   # LATENT VARIABLES
   Proc =~ PPS1 + PPS2 + PPS3 + PPS4 + PPS5 + PPS6 + PPS7 + PPS8 + PPS9 + PPS10 + PPS11 + PPS12;
   
-  # RESIDUALS - (Monaghan et al., 2024)
+  # RESIDUALS
+  # (Monaghan et al., 2024)
   PPS1 ~~ PPS2;
   PPS10 ~~ PPS11;
   
+  # Modification Indices
+  PPS9 ~~ PPS10;
+  PPS2 ~~ PPS3;
+  
   # STRUCTURAL MODEL
-  Proc ~ SLE + SLE:Age + Age + Sex + ChronicIllness;
+  Proc ~ b1*Class + b2*SRL + m1*Class:SRL + c1*Sex + c2*ChronicIllness;
 '
 
-# Fitting and outputting model
-fit <- sem(model = model, data = data_sem, estimator = "ML", missing = "fiml.x", group = "Class")
+fit_1 <- sem(model = model_1, data = data_sem, estimator = "MLR", missing = "fiml.x")
+```
 
-summary(fit, fit.measures = TRUE, standardized = TRUE, modindices = FALSE, rsquare = TRUE)
+We can examine the fit metrics and results of the model by using the ``glance()`` and ``tidy()`` functions respectively from the ``broom`` package.
+```{r sem-model-1-eval}
+# Fit Metrics
+broom::glance(fit_1) %>%
+  dplyr::select(AIC, BIC, cfi, tli, rmsea, srmr) %>%
+  mutate(across(everything(), \(x) round(x, digits = 3))) %>%
+  rename(CFI = cfi, TLI = tli, RMSEA = rmsea, SRMR = srmr) %>%
+  gt() %>%
+  gt_theme_guardian() %>%
+  cols_align(align = "center") %>%
+  tab_header(title = "Fit indices for model 1") %>%
+  tab_footnote(footnote = "A model was considered well fitted when the CFI and TLI values are greater than 0.90, RMSEA below 0.08, and SRMR below 0.05") %>%
+  opt_align_table_header(align = "center") %>%
+  tab_options(table.width = pct(100))
+
+# Results
+broom::tidy(fit_1) %>%
+  filter(label != "") %>%
+  dplyr::select(!c(op, label)) %>%
+  mutate(across(!c(term, p.value), \(x) round(x, digits = 2))) %>%
+  mutate(p.value = round(p.value, digits = 3)) %>%
+  gt() %>%
+  gt_theme_guardian() %>%
+  cols_align(align = "center") %>%
+  tab_header(title = "Results", subtitle = "Results for model 1") %>%
+  gt_highlight_rows(rows = p.value < 0.05, fill = "forestgreen", alpha = 0.5) %>%
+  opt_align_table_header(align = "center") %>%
+  tab_options(table.width = pct(100))
 
 ```
+
+::: {.callout-note title="Full Model Output" collapse=true}
+
+```{r full-model-output-1}
+summary(fit_1, fit.measures = TRUE, standardized = TRUE, modindices = FALSE, rsquare = TRUE)
+```
+
+:::
+
+### Model 2
+To assess the direct effects subjective remaining life on procrastination, between the LCA class structure, a multigroup structural equation model was applied to the data (see @fig-model-2). The model ran for 89 iterations and converged normally with acceptable fit (CFI = 0.885; TLI = 0.859; $\chi^2_{204}$ = 1067.886; RMSEA = 0.091; SRMR = 0.081). All latent variable loadings for procrastination were above 0.35.
+
+The results indicated a significant positive effect of subjective remaining life on procrastination for both class 1 ($\beta$ = 0.29; p = 0.001) and class 2 ($\beta$ = 0.27; p = 0.032). The model covariates sex and chronic illness were non-significant in both class structures.
+
+![Multigroup structural equation model](./images/05__model_2.png){#fig-model-2 .lightbox}
+
+```{r sem-model-2}
+# Specifying model -------------------------------------------------------------
+model_2 <- '
+  # LATENT VARIABLES
+  Proc =~ PPS1 + PPS2 + PPS3 + PPS4 + PPS5 + PPS6 + PPS7 + PPS8 + PPS9 + PPS10 + PPS11 + PPS12;
+  
+  # RESIDUALS
+  # (Monaghan et al., 2024)
+  PPS1 ~~ PPS2;
+  PPS10 ~~ PPS11;
+  
+  # Modification Indices
+  PPS9 ~~ PPS10;
+  PPS2 ~~ PPS3;
+  
+  # STRUCTURAL MODEL
+  Proc ~ SRL + Sex + ChronicIllness
+'
+
+fit_2 <- sem(model = model_2, data = data_sem, estimator = "MLR", missing = "fiml.x", group = "Class")
+```
+
+Again, we can examine the fit metrics and results of the model by using the ``glance()`` and ``tidy()`` functions from ``broom``.
+
+```{r sem-model-2-eval}
+# Fit Metrics
+broom::glance(fit_2) %>%
+  dplyr::select(AIC, BIC, cfi, tli, rmsea, srmr) %>%
+  mutate(across(everything(), \(x) round(x, digits = 3))) %>%
+  rename(CFI = cfi, TLI = tli, RMSEA = rmsea, SRMR = srmr) %>%
+  gt() %>%
+  gt_theme_guardian() %>%
+  cols_align(align = "center") %>%
+  tab_header(title = "Fit indices for model 2") %>%
+  tab_footnote(footnote = "A model was considered well fitted when the CFI and TLI values are greater than 0.90, RMSEA below 0.08, and SRMR below 0.05") %>%
+  opt_align_table_header(align = "center") %>%
+  tab_options(table.width = pct(100))
+
+# Results
+tidy_output(fit_2) %>%
+  gt() %>%
+  gt_theme_guardian() %>%
+  cols_align(align = "center") %>%
+  tab_header(title = "Results", subtitle = "Results for model 2") %>%
+  gt_highlight_rows(rows = p.value < 0.05, fill = "forestgreen", alpha = 0.5) %>%
+  opt_align_table_header(align = "center") %>%
+  tab_options(table.width = pct(100))
+
+```
+
+::: {.callout-note title="Full Model Output" collapse=true}
+
+```{r full-model-output-2}
+summary(fit_2, fit.measures = TRUE, standardized = TRUE, modindices = FALSE, rsquare = TRUE)
+```
+
+:::
+
+
+### Comparison
+The below table shows a comparison of fit between both models.
+```{r sem-model-comparison}
+rbind(broom::glance(fit_1), broom::glance(fit_2)) %>%
+  dplyr::select(AIC, BIC, cfi, tli, rmsea, srmr) %>%
+  mutate(across(everything(), \(x) round(x, digits = 2))) %>%
+  mutate(Model = c(1, 2), .before = AIC) %>%
+  rename(CFI = cfi, TLI = tli, RMSEA = rmsea, SRMR = srmr) %>%
+  gt() %>%
+  gt_theme_guardian() %>%
+  cols_align(align = "center") %>%
+  tab_header(title = "Fit Index Comparison",
+             subtitle = "Comparison of fit indices between model 1 & 2") %>%
+  tab_footnote(footnote = "A model was considered well fitted when the CFI and TLI values are greater than 0.90, RMSEA below 0.08, and SRMR below 0.05") %>%
+  opt_align_table_header(align = "center")
+```
+
+:::
 
 
 <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne">
