@@ -35,7 +35,8 @@ format:
     code-fold: true
     code-summary: "Show the code"
     include-in-header: 
-      - file: github-corner.html
+      - file: ./html/github-corner.html
+include-after-body: ./html/footer.html
 execute: 
   warning: false
 editor: source
@@ -499,7 +500,6 @@ summary(correlation_results) %>%
 ```
 
 ::: {.panel-tabset .nav-pills}
-
 #### Procrastination and CFC-I
 
 ```{r scatter_plot_PPS_CFC}
@@ -542,6 +542,7 @@ ggscatterstats(
 ```
 
 #### SRL and CFC-I
+
 ```{r scatter_plot_SRL_CFC}
 #| fig-width: 12
 #| fig-height: 8
@@ -560,7 +561,6 @@ ggscatterstats(
         plot.subtitle = element_text(hjust = 0.5))
 
 ```
-
 :::
 
 # Statistical Analysis
@@ -687,24 +687,14 @@ data <- data %>%
 
 # Setting up data for LCA ------------------------------------------------------
 data_polca <- data %>%
-  # Creating factor variables
-  mutate(
-    # Age groups coded from 1 - 3
-    age_group = case_when(
-      age_group == "18-24" ~ 1,
-      age_group == "25-44" ~ 2,
-      age_group == "45+" ~ 3),
-    age_group = as.factor(age_group)
-  ) %>%
-  # Only necessary variables
-  dplyr::select(Sex, ChronicIllness, age_group, starts_with("F_"), starts_with("I_"))
+  dplyr::select(starts_with("F_"), starts_with("I_"))
 
 # Outputting new scoring system
-data %>%
+data_polca %>%
   dplyr::select(starts_with("F_")) %>%
   head(n = 6) %>%
   gt() %>%
-  gt_theme_guardian() %>%
+  gt_theme_538() %>%
   cols_align(align = "center") %>%
   tab_header(title = "New Scoring System") %>%
   tab_options(table.width = pct(100)) %>%
@@ -926,30 +916,27 @@ proc_fc <- data_classification %>%
       plot.title = element_text(hjust = 0.5, size = 10, face = "bold"),
       legend.position = "bottom"))
 ```
-
 :::
 
-##  SEM Analysis
+## SEM Analysis
 
-After performing the LCA we ran two **structural equation models** (one global model and one multi-group model) using the ``lavaan`` package to evaluate the relationship between latent constructs and observed variables.
+After performing the LCA we ran two **structural equation models** (one global model and one multi-group model) using the `lavaan` package to evaluate the relationship between latent constructs and observed variables.
 
 We start by performing a few small pre-processing steps to prefer the data for SEM. This involves scaling SRL to be mean centered and chronic illness recoded so that 0 now means "no presence of illness" and 1 means "presence of illness".
 
 ```{r sem-data-processing}
 # Data processing 
 data_sem <- data_classification %>%
-  mutate(SRL = scale(SRL, center = TRUE),
-         ChronicIllness = factor(ifelse(ChronicIllness == 0, 1, 0), levels = c(0, 1))) %>%
-  dplyr::select(Age, SRL, Sex, ChronicIllness, Class, starts_with("PPS"))
+  mutate(SRL = scale(SRL, center = TRUE)) %>%
+  dplyr::select(SRL, Sex, ChronicIllness, Class, starts_with("PPS"))
 ```
 
-
-::: {.panel-tabset .nav-pills}
+::::: {.panel-tabset .nav-pills}
 ### Model 1
+
 To assess the direct effects of LCA class structure, subjective remaining life, and their interaction on procrastination, a structural equation model was applied to the data (see @fig-model-1). The model ran for 54 iterations and converged normally with acceptable fit (CFI = 0.901; TLI = 0.881; $\chi^2_{126}$ = 988.60; RMSEA = 0.076; SRMR = 0.071). All latent variable loadings for procrastination were above 0.31.
 
 The results indicated a significant negative effect of the LCA class structure on procrastination ($\beta$ = -0.33; p = 0.034), while subjective remaining life had a significant positive effect ($\beta$ = 0.30; p = 0.001). However, the interaction between class structure and subjective remaining life was non-significant ($\beta$ = -0.06; p = 0.661). Furthermore, the model covariates, sex ($\beta$ = -0.08; p = -.592) and chronic illness ($\beta$ = -0.20; p = 0.199) did not show any significant associations with procrastination.
-
 
 ![Global structural equation model](./images/04__model_1.png){#fig-model-1 .lightbox}
 
@@ -975,7 +962,8 @@ model_1 <- '
 fit_1 <- sem(model = model_1, data = data_sem, estimator = "MLR", missing = "fiml.x")
 ```
 
-We can examine the fit metrics and results of the model by using the ``glance()`` and ``tidy()`` functions respectively from the ``broom`` package.
+We can examine the fit metrics and results of the model by using the `glance()` and `tidy()` functions respectively from the `broom` package.
+
 ```{r sem-model-1-eval}
 # Fit Metrics
 broom::glance(fit_1) %>%
@@ -983,7 +971,7 @@ broom::glance(fit_1) %>%
   mutate(across(everything(), \(x) round(x, digits = 3))) %>%
   rename(CFI = cfi, TLI = tli, RMSEA = rmsea, SRMR = srmr) %>%
   gt() %>%
-  gt_theme_guardian() %>%
+  gt_theme_538() %>%
   cols_align(align = "center") %>%
   tab_header(title = "Fit indices for model 1") %>%
   tab_footnote(footnote = "A model was considered well fitted when the CFI and TLI values are greater than 0.90, RMSEA below 0.08, and SRMR below 0.05") %>%
@@ -997,7 +985,7 @@ broom::tidy(fit_1) %>%
   mutate(across(!c(term, p.value), \(x) round(x, digits = 2))) %>%
   mutate(p.value = round(p.value, digits = 3)) %>%
   gt() %>%
-  gt_theme_guardian() %>%
+  gt_theme_538() %>%
   cols_align(align = "center") %>%
   tab_header(title = "Results", subtitle = "Results for model 1") %>%
   gt_highlight_rows(rows = p.value < 0.05, fill = "forestgreen", alpha = 0.5) %>%
@@ -1006,15 +994,14 @@ broom::tidy(fit_1) %>%
 
 ```
 
-::: {.callout-note title="Full Model Output" collapse=true}
-
+::: {.callout-note title="Full Model Output" collapse="true"}
 ```{r full-model-output-1}
 summary(fit_1, fit.measures = TRUE, standardized = TRUE, modindices = FALSE, rsquare = TRUE)
 ```
-
 :::
 
 ### Model 2
+
 To assess the direct effects subjective remaining life on procrastination, between the LCA class structure, a multigroup structural equation model was applied to the data (see @fig-model-2). The model ran for 89 iterations and converged normally with acceptable fit (CFI = 0.885; TLI = 0.859; $\chi^2_{204}$ = 1067.886; RMSEA = 0.091; SRMR = 0.081). All latent variable loadings for procrastination were above 0.35.
 
 The results indicated a significant positive effect of subjective remaining life on procrastination for both class 1 ($\beta$ = 0.29; p = 0.001) and class 2 ($\beta$ = 0.27; p = 0.032). The model covariates sex and chronic illness were non-significant in both class structures.
@@ -1043,7 +1030,7 @@ model_2 <- '
 fit_2 <- sem(model = model_2, data = data_sem, estimator = "MLR", missing = "fiml.x", group = "Class")
 ```
 
-Again, we can examine the fit metrics and results of the model by using the ``glance()`` and ``tidy()`` functions from ``broom``.
+Again, we can examine the fit metrics and results of the model by using the `glance()` and `tidy()` functions from `broom`.
 
 ```{r sem-model-2-eval}
 # Fit Metrics
@@ -1052,7 +1039,7 @@ broom::glance(fit_2) %>%
   mutate(across(everything(), \(x) round(x, digits = 3))) %>%
   rename(CFI = cfi, TLI = tli, RMSEA = rmsea, SRMR = srmr) %>%
   gt() %>%
-  gt_theme_guardian() %>%
+  gt_theme_538() %>%
   cols_align(align = "center") %>%
   tab_header(title = "Fit indices for model 2") %>%
   tab_footnote(footnote = "A model was considered well fitted when the CFI and TLI values are greater than 0.90, RMSEA below 0.08, and SRMR below 0.05") %>%
@@ -1062,7 +1049,7 @@ broom::glance(fit_2) %>%
 # Results
 tidy_output(fit_2) %>%
   gt() %>%
-  gt_theme_guardian() %>%
+  gt_theme_538() %>%
   cols_align(align = "center") %>%
   tab_header(title = "Results", subtitle = "Results for model 2") %>%
   gt_highlight_rows(rows = p.value < 0.05, fill = "forestgreen", alpha = 0.5) %>%
@@ -1071,17 +1058,16 @@ tidy_output(fit_2) %>%
 
 ```
 
-::: {.callout-note title="Full Model Output" collapse=true}
-
+::: {.callout-note title="Full Model Output" collapse="true"}
 ```{r full-model-output-2}
 summary(fit_2, fit.measures = TRUE, standardized = TRUE, modindices = FALSE, rsquare = TRUE)
 ```
-
 :::
 
-
 ### Comparison
+
 The below table shows a comparison of fit between both models.
+
 ```{r sem-model-comparison}
 rbind(broom::glance(fit_1), broom::glance(fit_2)) %>%
   dplyr::select(AIC, BIC, cfi, tli, rmsea, srmr) %>%
@@ -1089,16 +1075,14 @@ rbind(broom::glance(fit_1), broom::glance(fit_2)) %>%
   mutate(Model = c(1, 2), .before = AIC) %>%
   rename(CFI = cfi, TLI = tli, RMSEA = rmsea, SRMR = srmr) %>%
   gt() %>%
-  gt_theme_guardian() %>%
+  gt_theme_538() %>%
   cols_align(align = "center") %>%
   tab_header(title = "Fit Index Comparison",
              subtitle = "Comparison of fit indices between model 1 & 2") %>%
   tab_footnote(footnote = "A model was considered well fitted when the CFI and TLI values are greater than 0.90, RMSEA below 0.08, and SRMR below 0.05") %>%
   opt_align_table_header(align = "center")
 ```
-
-:::
-
+:::::
 
 <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne">
 
